@@ -1,5 +1,5 @@
 <resources>
-<style name="Theme.Jobradar" parent="android:style/Theme.Material.Light.NoActionBar">
-    <item name="android:fontFamily">sans</item>
-</style>
+    <style name="Theme.Jobradar" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+    </style>
 </resources>

@@ -1,6 +1,9 @@
 package net.therapietermin.jobradar.data
 
-import androidx.room.*
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -13,4 +16,7 @@ interface JobDao {
 
     @Query("UPDATE jobs SET status=:status WHERE sourceId=:id")
     suspend fun setStatus(id: String, status: String)
+
+    @Query("SELECT sourceId FROM jobs WHERE sourceId IN (:ids)")
+    suspend fun existingIds(ids: List<String>): List<String>
 }
