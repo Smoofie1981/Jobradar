@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface JobDao {
-    @Query("SELECT * FROM jobs ORDER BY score DESC, firstSeen DESC")
+    @Query("SELECT * FROM jobs ORDER BY firstSeen DESC")
     fun observeAll(): Flow<List<Job>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

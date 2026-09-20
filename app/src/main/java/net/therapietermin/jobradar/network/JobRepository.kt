@@ -13,7 +13,7 @@ class JobRepository(
 ) {
     data class SearchSummary(
         val scanned: Int,
-        val matched: Int,
+        val accepted: Int,
         val newCount: Int,
         val sourceSummary: String
     )
@@ -46,13 +46,26 @@ class JobRepository(
             delay(300)
         }
 
+        // Technik / Projekt / Infrastruktur
         collectBa(what = "Projekt", where = "Magdeburg", radius = 50, size = 75)
         collectBa(what = "Ingenieur", where = "Magdeburg", radius = 50, size = 75)
         collectBa(what = "Infrastruktur", where = "Magdeburg", radius = 50, size = 75)
         collectBa(what = "Maschinenbau", where = "Magdeburg", radius = 50, size = 75)
-        collectBa(where = "Stendal", radius = 15, size = 50)
 
-        val baJobs = baHits.values.take(120).map { hit ->
+        // Medien / Kommunikation
+        collectBa(what = "Medien", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(what = "Kommunikation", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(what = "Öffentlichkeitsarbeit", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(what = "Redaktion", where = "Magdeburg", radius = 50, size = 75)
+
+        // Sozialpädagogik – später hart auf Ministerien begrenzt.
+        collectBa(what = "Sozialpädagogik", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(what = "Soziale Arbeit", where = "Magdeburg", radius = 50, size = 75)
+
+        // Stendal bleibt die vereinbarte Ausnahme.
+        collectBa(where = "Stendal", radius = 15, size = 60)
+
+        val baJobs = baHits.values.take(180).map { hit ->
             runCatching { baService.details(hit) }
                 .getOrElse { baService.asBasicJob(hit) }
         }
@@ -88,21 +101,18 @@ class JobRepository(
             )
         }
 
-        val matchedJobs = rawJobs.values.mapNotNull { raw ->
-            val (score, reasons) = JobMatcher.score(raw)
-            if (score < 50) null
-            else raw.copy(
-                score = score,
-                reasons = reasons.joinToString(" • ")
-            )
-        }.sortedByDescending { it.score }
+        // Keine Prozentbewertung mehr. Nur noch die vereinbarten harten Ausschlüsse
+        // und die Zuordnung zu Technik / Medien / Sozialpädagogik.
+        val acceptedJobs = rawJobs.values
+            .filter { JobMatcher.shouldInclude(it) }
+            .map { it.copy(score = 0, reasons = "") }
 
-        val ids = matchedJobs.map { it.sourceId }
+        val ids = acceptedJobs.map { it.sourceId }
         val existing = if (ids.isEmpty()) emptySet()
         else dao.existingIds(ids).toSet()
 
         val newCount = ids.count { it !in existing }
-        dao.insertAll(matchedJobs)
+        dao.insertAll(acceptedJobs)
 
         val summary = sourceCounts.entries
             .filter { it.value > 0 }
@@ -114,7 +124,7 @@ class JobRepository(
 
         SearchSummary(
             scanned = rawJobs.size,
-            matched = matchedJobs.size,
+            accepted = acceptedJobs.size,
             newCount = newCount,
             sourceSummary = summary
         )

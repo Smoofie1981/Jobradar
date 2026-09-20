@@ -113,7 +113,7 @@ object PortalJobSources {
         }
 
         return candidates.values
-            .take(60)
+            .take(80)
             .mapNotNull { (titleFromList, detailUrl) ->
                 buildJob(config, titleFromList, detailUrl)
             }
@@ -157,7 +157,8 @@ object PortalJobSources {
             else -> null
         }
 
-        val sourceId = "${config.source}:${Integer.toHexString(detailUrl.hashCode())}:${Integer.toHexString(title.hashCode())}"
+        val sourceId =
+            "${config.source}:${Integer.toHexString(detailUrl.hashCode())}:${Integer.toHexString(title.hashCode())}"
 
         return Job(
             sourceId = sourceId,
@@ -184,11 +185,18 @@ object PortalJobSources {
         if (navigation.any { t == it || t.startsWith("$it ") }) return false
 
         val jobWords = listOf(
+            // Technik / Projekt
             "projekt", "ingenieur", "techniker", "referent", "sachbearbeit",
             "bau", "planung", "infrastruktur", "koordination", "manager",
             "management", "vergabe", "ausschreibung", "beschaffung",
             "einkauf", "maschinenbau", "verkehr", "netz", "energie",
-            "leiter", "leitung", "fachkraft", "consult", "steuerung"
+            "leiter", "leitung", "fachkraft", "consult", "steuerung",
+            // Medien / Kommunikation
+            "medien", "media", "video", "bewegtbild", "redaktion",
+            "redakteur", "content", "kommunikation", "öffentlichkeitsarbeit",
+            "presse", "social media", "produktion", "kamera",
+            // Sozialpädagogik
+            "sozialpädagog", "sozialarbeit", "soziale arbeit", "sozialwesen"
         )
         return jobWords.any { it in t }
     }
@@ -238,6 +246,12 @@ object PortalJobSources {
             "Ministerium der Finanzen",
             "Ministerium für Infrastruktur und Digitales",
             "Ministerium für Wirtschaft, Tourismus, Landwirtschaft und Forsten",
+            "Ministerium für Arbeit, Soziales, Gesundheit und Gleichstellung",
+            "Ministerium für Bildung",
+            "Ministerium für Inneres und Sport",
+            "Ministerium für Wissenschaft, Energie, Klimaschutz und Umwelt",
+            "Ministerium für Justiz und Verbraucherschutz",
+            "Staatskanzlei und Ministerium für Kultur",
             "Landesbetrieb Bau- und Liegenschaftsmanagement Sachsen-Anhalt"
         )
         return known.firstOrNull { text.contains(it, ignoreCase = true) }
@@ -262,9 +276,12 @@ object PortalJobSources {
             setRequestProperty(
                 "User-Agent",
                 "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36 Jobradar/0.3"
+                    "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36 Jobradar/0.4"
             )
-            setRequestProperty("Accept", "text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.5")
+            setRequestProperty(
+                "Accept",
+                "text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.5"
+            )
             setRequestProperty("Accept-Language", "de-DE,de;q=0.9")
             setRequestProperty("Accept-Encoding", "identity")
         }
@@ -286,16 +303,26 @@ object PortalJobSources {
             href.startsWith("mailto:", true) || href.startsWith("tel:", true)
         ) return null
 
-        return runCatching {
-            URL(URL(base), href).toString()
-        }.getOrNull()
+        return runCatching { URL(URL(base), href).toString() }.getOrNull()
     }
 
     private fun cleanHtml(html: String): String =
         htmlDecode(
             html
-                .replace(Regex("""<script\b.*?</script>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), " ")
-                .replace(Regex("""<style\b.*?</style>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), " ")
+                .replace(
+                    Regex(
+                        """<script\b.*?</script>""",
+                        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+                    ),
+                    " "
+                )
+                .replace(
+                    Regex(
+                        """<style\b.*?</style>""",
+                        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+                    ),
+                    " "
+                )
                 .replace(Regex("""<[^>]+>"""), " ")
                 .replace(Regex("""\s+"""), " ")
                 .trim()

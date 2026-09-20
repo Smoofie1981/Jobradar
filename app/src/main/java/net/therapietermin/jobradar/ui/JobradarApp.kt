@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import net.therapietermin.jobradar.data.AppDatabase
 import net.therapietermin.jobradar.data.Job
+import net.therapietermin.jobradar.domain.JobMatcher
 import net.therapietermin.jobradar.network.JobRepository
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,9 +32,45 @@ fun JobradarApp() {
         mutableStateOf("Suche: Magdeburg + 50 km · Stendal als Ausnahme")
     }
 
+    var selectedField by remember { mutableStateOf("Alle Fachbereiche") }
+    var selectedEmployer by remember { mutableStateOf("Alle Arbeitgeber") }
+
     val labels = listOf("Neu", "Interessant", "Beworben", "Ausgeblendet")
     val statuses = listOf("NEW", "INTERESTING", "APPLIED", "HIDDEN")
-    val visibleJobs = jobs.filter { it.status == statuses[tab] }
+
+    val employers = remember(jobs, tab, selectedField) {
+        jobs
+            .asSequence()
+            .filter { it.status == statuses[tab] }
+            .filter {
+                selectedField == "Alle Fachbereiche" ||
+                    JobMatcher.category(it) == selectedField
+            }
+            .map { it.employer.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sortedBy { it.lowercase() }
+            .toList()
+    }
+
+    val visibleJobs = jobs
+        .filter { it.status == statuses[tab] }
+        .filter {
+            selectedField == "Alle Fachbereiche" ||
+                JobMatcher.category(it) == selectedField
+        }
+        .filter {
+            selectedEmployer == "Alle Arbeitgeber" ||
+                it.employer == selectedEmployer
+        }
+
+    LaunchedEffect(selectedField, tab) {
+        if (selectedEmployer != "Alle Arbeitgeber" &&
+            selectedEmployer !in employers
+        ) {
+            selectedEmployer = "Alle Arbeitgeber"
+        }
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Jobradar") }) },
@@ -63,11 +100,12 @@ fun JobradarApp() {
                             try {
                                 val result = repository.refresh()
                                 message =
-                                    "${result.matched} passende Stellen · " +
+                                    "${result.accepted} Stellen übernommen · " +
                                     "${result.newCount} neu · ${result.scanned} geprüft\n" +
                                     "Quellen: ${result.sourceSummary}"
                             } catch (e: Exception) {
-                                message = "Suche fehlgeschlagen: ${e.message ?: "unbekannter Fehler"}"
+                                message =
+                                    "Suche fehlgeschlagen: ${e.message ?: "unbekannter Fehler"}"
                             } finally {
                                 searching = false
                             }
@@ -83,16 +121,44 @@ fun JobradarApp() {
                         )
                         Spacer(Modifier.width(10.dp))
                     }
-                    Text(if (searching) "Mehrquellen-Suche läuft …" else "Jetzt nach neuen Jobs suchen")
+                    Text(
+                        if (searching) "Mehrquellen-Suche läuft …"
+                        else "Jetzt nach neuen Jobs suchen"
+                    )
                 }
 
                 Spacer(Modifier.height(8.dp))
                 Text(message, style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(10.dp))
+
+                FilterDropdown(
+                    label = "Fachbereich",
+                    value = selectedField,
+                    options = listOf(
+                        "Alle Fachbereiche",
+                        "Technik",
+                        "Medien",
+                        "Sozialpädagogik"
+                    ),
+                    onSelected = {
+                        selectedField = it
+                        selectedEmployer = "Alle Arbeitgeber"
+                    }
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                FilterDropdown(
+                    label = "Arbeitgeber / ausschreibende Stelle",
+                    value = selectedEmployer,
+                    options = listOf("Alle Arbeitgeber") + employers,
+                    onSelected = { selectedEmployer = it }
+                )
+
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    "Quellen: Bundesagentur für Arbeit · INTERAMT · Karriereportal Sachsen-Anhalt · " +
-                        "SWM/Netze Magdeburg · Autobahn GmbH · MVB · tägliche Hintergrundsuche",
-                    style = MaterialTheme.typography.labelSmall
+                    "${visibleJobs.size} Stellen in dieser Ansicht",
+                    style = MaterialTheme.typography.labelMedium
                 )
             }
 
@@ -100,10 +166,10 @@ fun JobradarApp() {
                 item {
                     Card(Modifier.fillMaxWidth()) {
                         Text(
-                            if (tab == 0)
-                                "Noch keine Treffer gespeichert. Starte oben die Mehrquellen-Suche."
+                            if (jobs.none { it.status == statuses[tab] })
+                                "In diesem Bereich sind noch keine Stellen."
                             else
-                                "In diesem Bereich sind noch keine Stellen.",
+                                "Für diese Filterkombination gibt es keine Stellen.",
                             modifier = Modifier.padding(16.dp)
                         )
                     }
@@ -129,25 +195,68 @@ fun JobradarApp() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterDropdown(
+    label: String,
+    value: String,
+    options: List<String>,
+    onSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded }
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = {
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+            },
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth()
+        )
+
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.distinct().forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onSelected(option)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun JobCard(
     job: Job,
     onOpen: () -> Unit,
     onStatus: (String) -> Unit
 ) {
+    val field = JobMatcher.category(job) ?: "Sonstiges"
+
     Card(Modifier.fillMaxWidth()) {
         Column(
             Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-            Text("${job.score} % passend", style = MaterialTheme.typography.labelLarge)
+            Text(field, style = MaterialTheme.typography.labelLarge)
             Text(job.title, style = MaterialTheme.typography.titleMedium)
             Text("${job.employer} · ${job.city}")
             job.pay?.let { Text(it) }
             if (job.permanent == true) Text("Unbefristet")
-            if (job.reasons.isNotBlank()) {
-                Text(job.reasons, style = MaterialTheme.typography.bodySmall)
-            }
             Text("Quelle: ${job.source}", style = MaterialTheme.typography.labelSmall)
 
             Button(
