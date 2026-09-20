@@ -9,19 +9,23 @@ import net.therapietermin.jobradar.domain.JobMatcher
 
 class JobRepository(
     private val dao: JobDao,
-    private val service: JobsucheService = JobsucheService()
+    private val baService: JobsucheService = JobsucheService()
 ) {
     data class SearchSummary(
         val scanned: Int,
         val matched: Int,
-        val newCount: Int
+        val newCount: Int,
+        val sourceSummary: String
     )
 
     suspend fun refresh(): SearchSummary = withContext(Dispatchers.IO) {
-        val hits = linkedMapOf<String, JobsucheService.SearchHit>()
+        val rawJobs = linkedMapOf<String, Job>()
+        val sourceCounts = linkedMapOf<String, Int>()
         val errors = mutableListOf<String>()
 
-        suspend fun collect(
+        val baHits = linkedMapOf<String, JobsucheService.SearchHit>()
+
+        suspend fun collectBa(
             what: String? = null,
             where: String = "Magdeburg",
             radius: Int = 50,
@@ -29,90 +33,69 @@ class JobRepository(
             size: Int = 50
         ) {
             try {
-                service.search(
+                baService.search(
                     what = what,
                     where = where,
                     radius = radius,
                     employer = employer,
                     size = size
-                ).forEach { hits.putIfAbsent(it.ref, it) }
+                ).forEach { baHits.putIfAbsent(it.ref, it) }
             } catch (e: Exception) {
-                errors += (e.message ?: e.javaClass.simpleName)
+                errors += "BA: ${e.message ?: e.javaClass.simpleName}"
             }
-            delay(350)
+            delay(300)
         }
 
-        // Weniger, breitere Anfragen als in 0.2.0.
-        // Dadurch wird die BA-Schnittstelle nicht mit vielen Requests auf einmal belastet.
-        collect(what = "Projekt", where = "Magdeburg", radius = 50, size = 75)
-        collect(what = "Ingenieur", where = "Magdeburg", radius = 50, size = 75)
-        collect(what = "Infrastruktur", where = "Magdeburg", radius = 50, size = 75)
-        collect(what = "Maschinenbau", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(what = "Projekt", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(what = "Ingenieur", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(what = "Infrastruktur", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(what = "Maschinenbau", where = "Magdeburg", radius = 50, size = 75)
+        collectBa(where = "Stendal", radius = 15, size = 50)
 
-        // Stendal bleibt die vereinbarte Ausnahme.
-        collect(where = "Stendal", radius = 15, size = 60)
+        val baJobs = baHits.values.take(120).map { hit ->
+            runCatching { baService.details(hit) }
+                .getOrElse { baService.asBasicJob(hit) }
+        }
+        baJobs.forEach { rawJobs.putIfAbsent(it.sourceId, it) }
+        sourceCounts["BA"] = baJobs.size
 
-        // Zwei priorisierte Arbeitgeber zusätzlich direkt suchen.
-        collect(
-            where = "Magdeburg",
-            radius = 50,
-            employer = "Städtische Werke Magdeburg",
-            size = 40
-        )
-        collect(
-            where = "Magdeburg",
-            radius = 50,
-            employer = "Die Autobahn GmbH des Bundes",
-            size = 40
-        )
+        PortalJobSources.scanAll().forEach { result ->
+            if (result.error != null) {
+                errors += "${result.source}: ${result.error}"
+            }
 
-        if (hits.isEmpty()) {
-            val detail = errors.distinct().take(3).joinToString(" | ")
+            result.jobs.forEach { raw ->
+                val dedupKey = raw.url.lowercase()
+                val already = rawJobs.values.any { it.url.lowercase() == dedupKey }
+                if (!already) rawJobs[raw.sourceId] = raw
+            }
+
+            val key = when (result.source) {
+                "Karriereportal Sachsen-Anhalt" -> "Land SA"
+                "SWM Magdeburg" -> "SWM"
+                "MVB Magdeburg" -> "MVB"
+                "Autobahn GmbH" -> "Autobahn"
+                else -> result.source
+            }
+            sourceCounts[key] = (sourceCounts[key] ?: 0) + result.jobs.size
+        }
+
+        if (rawJobs.isEmpty()) {
+            val details = errors.distinct().take(4).joinToString(" | ")
             throw IllegalStateException(
-                if (detail.isBlank()) {
-                    "Die BA-Jobsuche lieferte aktuell keine Daten."
-                } else {
-                    "BA-Jobsuche nicht erreichbar: $detail"
-                }
+                if (details.isBlank()) "Keine der Stellenquellen lieferte aktuell Daten."
+                else "Keine Quelle lieferte Daten: $details"
             )
         }
 
-        // Zuerst mit den Daten aus der Trefferliste bewerten.
-        // So bleiben Treffer sichtbar, selbst wenn der Detail-Endpunkt zeitweise blockiert.
-        val prelim = hits.values.map { hit ->
-            val raw = service.asBasicJob(hit)
+        val matchedJobs = rawJobs.values.mapNotNull { raw ->
             val (score, reasons) = JobMatcher.score(raw)
-            Triple(hit, score, reasons)
-        }.filter { (_, score, _) -> score >= 50 }
-            .sortedByDescending { (_, score, _) -> score }
-
-        val matchedJobs = mutableListOf<Job>()
-
-        // Nur für die bestbewerteten Kandidaten Detaildaten abrufen.
-        // Wenn das scheitert, wird der Treffer trotzdem gespeichert.
-        for ((index, item) in prelim.withIndex()) {
-            val (hit, _, _) = item
-
-            val raw: Job = if (index < 20) {
-                try {
-                    service.details(hit)
-                } catch (_: Exception) {
-                    service.asBasicJob(hit)
-                }
-            } else {
-                service.asBasicJob(hit)
-            }
-
-            val (score, reasons) = JobMatcher.score(raw)
-            if (score >= 50) {
-                matchedJobs += raw.copy(
-                    score = score,
-                    reasons = reasons.joinToString(" • ")
-                )
-            }
-
-            if (index < 20) delay(160)
-        }
+            if (score < 50) null
+            else raw.copy(
+                score = score,
+                reasons = reasons.joinToString(" • ")
+            )
+        }.sortedByDescending { it.score }
 
         val ids = matchedJobs.map { it.sourceId }
         val existing = if (ids.isEmpty()) emptySet()
@@ -121,10 +104,19 @@ class JobRepository(
         val newCount = ids.count { it !in existing }
         dao.insertAll(matchedJobs)
 
+        val summary = sourceCounts.entries
+            .filter { it.value > 0 }
+            .joinToString(" · ") { "${it.key} ${it.value}" }
+            .ifBlank {
+                if (errors.isEmpty()) "keine Quellendetails"
+                else "Teilfehler bei Quellen"
+            }
+
         SearchSummary(
-            scanned = hits.size,
+            scanned = rawJobs.size,
             matched = matchedJobs.size,
-            newCount = newCount
+            newCount = newCount,
+            sourceSummary = summary
         )
     }
 }

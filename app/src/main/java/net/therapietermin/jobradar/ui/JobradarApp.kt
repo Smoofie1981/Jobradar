@@ -27,7 +27,9 @@ fun JobradarApp() {
 
     var tab by remember { mutableIntStateOf(0) }
     var searching by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf("Live-Suche: Magdeburg + 50 km, Stendal als Ausnahme") }
+    var message by remember {
+        mutableStateOf("Suche: Magdeburg + 50 km · Stendal als Ausnahme")
+    }
 
     val labels = listOf("Neu", "Interessant", "Beworben", "Ausgeblendet")
     val statuses = listOf("NEW", "INTERESTING", "APPLIED", "HIDDEN")
@@ -57,10 +59,13 @@ fun JobradarApp() {
                     onClick = {
                         scope.launch {
                             searching = true
-                            message = "Suche läuft …"
+                            message = "Mehrquellen-Suche läuft …"
                             try {
                                 val result = repository.refresh()
-                                message = "${result.matched} passende Stellen gefunden · ${result.newCount} neu · ${result.scanned} geprüft"
+                                message =
+                                    "${result.matched} passende Stellen · " +
+                                    "${result.newCount} neu · ${result.scanned} geprüft\n" +
+                                    "Quellen: ${result.sourceSummary}"
                             } catch (e: Exception) {
                                 message = "Suche fehlgeschlagen: ${e.message ?: "unbekannter Fehler"}"
                             } finally {
@@ -78,13 +83,15 @@ fun JobradarApp() {
                         )
                         Spacer(Modifier.width(10.dp))
                     }
-                    Text(if (searching) "Suche läuft …" else "Jetzt nach neuen Jobs suchen")
+                    Text(if (searching) "Mehrquellen-Suche läuft …" else "Jetzt nach neuen Jobs suchen")
                 }
+
                 Spacer(Modifier.height(8.dp))
                 Text(message, style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Quelle aktuell: Jobsuche der Bundesagentur für Arbeit · tägliche Hintergrundsuche aktiviert",
+                    "Quellen: Bundesagentur für Arbeit · INTERAMT · Karriereportal Sachsen-Anhalt · " +
+                        "SWM/Netze Magdeburg · Autobahn GmbH · MVB · tägliche Hintergrundsuche",
                     style = MaterialTheme.typography.labelSmall
                 )
             }
@@ -93,8 +100,10 @@ fun JobradarApp() {
                 item {
                     Card(Modifier.fillMaxWidth()) {
                         Text(
-                            if (tab == 0) "Noch keine Treffer gespeichert. Starte oben die Live-Suche."
-                            else "In diesem Bereich sind noch keine Stellen.",
+                            if (tab == 0)
+                                "Noch keine Treffer gespeichert. Starte oben die Mehrquellen-Suche."
+                            else
+                                "In diesem Bereich sind noch keine Stellen.",
                             modifier = Modifier.padding(16.dp)
                         )
                     }
@@ -106,10 +115,14 @@ fun JobradarApp() {
                     job = job,
                     onOpen = {
                         runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(job.url)))
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(job.url))
+                            )
                         }
                     },
-                    onStatus = { status -> scope.launch { dao.setStatus(job.sourceId, status) } }
+                    onStatus = { status ->
+                        scope.launch { dao.setStatus(job.sourceId, status) }
+                    }
                 )
             }
         }
@@ -117,18 +130,30 @@ fun JobradarApp() {
 }
 
 @Composable
-private fun JobCard(job: Job, onOpen: () -> Unit, onStatus: (String) -> Unit) {
+private fun JobCard(
+    job: Job,
+    onOpen: () -> Unit,
+    onStatus: (String) -> Unit
+) {
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
             Text("${job.score} % passend", style = MaterialTheme.typography.labelLarge)
             Text(job.title, style = MaterialTheme.typography.titleMedium)
             Text("${job.employer} · ${job.city}")
             job.pay?.let { Text(it) }
             if (job.permanent == true) Text("Unbefristet")
-            if (job.reasons.isNotBlank()) Text(job.reasons, style = MaterialTheme.typography.bodySmall)
-            Text(job.source, style = MaterialTheme.typography.labelSmall)
+            if (job.reasons.isNotBlank()) {
+                Text(job.reasons, style = MaterialTheme.typography.bodySmall)
+            }
+            Text("Quelle: ${job.source}", style = MaterialTheme.typography.labelSmall)
 
-            Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = onOpen,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text("Stellenanzeige öffnen")
             }
 
