@@ -2,6 +2,7 @@ package net.therapietermin.jobradar.network
 
 import android.util.Base64
 import net.therapietermin.jobradar.data.Job
+import net.therapietermin.jobradar.domain.SalaryParser
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -12,8 +13,6 @@ class JobsucheService {
     private val base = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service"
     private val apiKey = "jobboerse-jobsuche"
 
-    // Der User-Agent entspricht dem öffentlich dokumentierten Beispiel
-    // für die Jobsuche-Schnittstelle der Bundesagentur.
     private val jobsucheUserAgent =
         "Jobsuche/2.9.2 (de.arbeitsagentur.jobboerse; build:1077; iOS 15.1.0) Alamofire/5.4.4"
 
@@ -49,7 +48,6 @@ class JobsucheService {
             "${enc(it.key)}=${enc(it.value)}"
         }
 
-        // Mehrere dokumentierte Endpunkte als Fallback.
         val endpoints = listOf(
             "$base/pc/v6/jobs?$query",
             "$base/pc/v4/app/jobs?$query",
@@ -60,7 +58,7 @@ class JobsucheService {
         for (url in endpoints) {
             try {
                 val json = getJson(url)
-                val arr = json.optJSONArray("stellenangebote") ?: return emptyList()
+                val arr = json.optJSONArray("stellenangebote") ?: continue
 
                 return buildList {
                     for (i in 0 until arr.length()) {
@@ -72,12 +70,12 @@ class JobsucheService {
                             SearchHit(
                                 ref = ref,
                                 profession = firstNonBlank(
-                                    o,
-                                    "titel",
-                                    "stellenangebotsTitel",
-                                    "beruf"
+                                    o, "titel", "stellenangebotsTitel", "beruf"
                                 ) ?: "Stellenangebot",
-                                employer = o.optString("arbeitgeber", "Unbekannter Arbeitgeber"),
+                                employer = o.optString(
+                                    "arbeitgeber",
+                                    "Unbekannter Arbeitgeber"
+                                ),
                                 city = place?.optString("ort").orEmpty(),
                                 externalUrl = o.optString("externeUrl")
                                     .takeIf { it.startsWith("http") }
@@ -87,11 +85,12 @@ class JobsucheService {
                 }
             } catch (e: Exception) {
                 lastError = e
-                Thread.sleep(350)
+                Thread.sleep(300)
             }
         }
 
-        throw lastError ?: IOException("Jobsuche ohne Antwort")
+        if (lastError != null) throw lastError
+        return emptyList()
     }
 
     fun asBasicJob(hit: SearchHit): Job {
@@ -142,7 +141,10 @@ class JobsucheService {
             else -> null
         }
 
-        val pay = extractPay("$title $description ${json.optString("verguetung")}")
+        val salaryText =
+            "$title $description ${json.optString("verguetung")} ${json.optString("eintrittsdatum")}"
+        val pay = SalaryParser.extractDisplay(salaryText)
+
         val url = hit.externalUrl
             ?: "https://www.arbeitsagentur.de/jobsuche/jobdetail/${hit.ref}"
 
@@ -178,7 +180,8 @@ class JobsucheService {
 
                 try {
                     val code = conn.responseCode
-                    val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                    val stream =
+                        if (code in 200..299) conn.inputStream else conn.errorStream
                     val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
 
                     if (code !in 200..299) {
@@ -216,14 +219,4 @@ class JobsucheService {
         keys.asSequence()
             .map { o.optString(it) }
             .firstOrNull { it.isNotBlank() && it != "null" }
-
-    private fun extractPay(text: String): String? {
-        val patterns = listOf(
-            Regex("""(?i)\b(?:TV-L|TVöD(?:-VKA)?)\s*(?:EG|E)?\s*(1[0-5]|9[abc]?)\b"""),
-            Regex("""(?i)\b(?:EG|E)\s*(1[0-5]|9[abc]?)\b""")
-        )
-        return patterns.asSequence()
-            .mapNotNull { it.find(text)?.value }
-            .firstOrNull()
-    }
 }

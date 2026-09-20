@@ -15,13 +15,19 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import net.therapietermin.jobradar.MainActivity
 import net.therapietermin.jobradar.data.AppDatabase
+import net.therapietermin.jobradar.domain.SearchPreferences
 import net.therapietermin.jobradar.network.JobRepository
 
-class JobSearchWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
+class JobSearchWorker(
+    appContext: Context,
+    params: WorkerParameters
+) : CoroutineWorker(appContext, params) {
+
     override suspend fun doWork(): Result {
         return try {
             val dao = AppDatabase.get(applicationContext).jobs()
-            val summary = JobRepository(dao).refresh()
+            val radius = SearchPreferences.getRadius(applicationContext)
+            val summary = JobRepository(dao).refresh(radius)
             if (summary.newCount > 0) notifyNewJobs(summary.newCount)
             Result.success()
         } catch (_: Exception) {
@@ -31,14 +37,23 @@ class JobSearchWorker(appContext: Context, params: WorkerParameters) : Coroutine
 
     private fun notifyNewJobs(count: Int) {
         if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
         ) return
 
         val channelId = "jobradar_new_jobs"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val nm =
+                applicationContext.getSystemService(Context.NOTIFICATION_SERVICE)
+                    as NotificationManager
             nm.createNotificationChannel(
-                NotificationChannel(channelId, "Neue passende Stellen", NotificationManager.IMPORTANCE_DEFAULT)
+                NotificationChannel(
+                    channelId,
+                    "Neue Stellen",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                )
             )
         }
 
@@ -49,14 +64,19 @@ class JobSearchWorker(appContext: Context, params: WorkerParameters) : Coroutine
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = NotificationCompat.Builder(applicationContext, channelId)
+
+        val notification = NotificationCompat.Builder(
+            applicationContext,
+            channelId
+        )
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Jobradar")
-            .setContentText("$count neue passende Stellen gefunden")
+            .setContentText("$count neue Stellen gefunden")
             .setContentIntent(pending)
             .setAutoCancel(true)
             .build()
 
-        NotificationManagerCompat.from(applicationContext).notify(1001, notification)
+        NotificationManagerCompat.from(applicationContext)
+            .notify(1001, notification)
     }
 }

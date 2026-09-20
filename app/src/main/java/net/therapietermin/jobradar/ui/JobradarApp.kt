@@ -15,6 +15,8 @@ import kotlinx.coroutines.launch
 import net.therapietermin.jobradar.data.AppDatabase
 import net.therapietermin.jobradar.data.Job
 import net.therapietermin.jobradar.domain.JobMatcher
+import net.therapietermin.jobradar.domain.SalaryParser
+import net.therapietermin.jobradar.domain.SearchPreferences
 import net.therapietermin.jobradar.network.JobRepository
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -28,8 +30,14 @@ fun JobradarApp() {
 
     var tab by remember { mutableIntStateOf(0) }
     var searching by remember { mutableStateOf(false) }
+
+    var selectedRadius by remember {
+        mutableIntStateOf(SearchPreferences.getRadius(context))
+    }
     var message by remember {
-        mutableStateOf("Suche: Magdeburg + 50 km · Stendal als Ausnahme")
+        mutableStateOf(
+            "Suche: Magdeburg + $selectedRadius km · Stendal als Ausnahme"
+        )
     }
 
     var selectedField by remember { mutableStateOf("Alle Fachbereiche") }
@@ -38,10 +46,13 @@ fun JobradarApp() {
     val labels = listOf("Neu", "Interessant", "Beworben", "Ausgeblendet")
     val statuses = listOf("NEW", "INTERESTING", "APPLIED", "HIDDEN")
 
-    val employers = remember(jobs, tab, selectedField) {
-        jobs
+    val eligibleInTab = jobs
+        .filter { it.status == statuses[tab] }
+        .filter { JobMatcher.shouldInclude(it) }
+
+    val employers = remember(eligibleInTab, selectedField) {
+        eligibleInTab
             .asSequence()
-            .filter { it.status == statuses[tab] }
             .filter {
                 selectedField == "Alle Fachbereiche" ||
                     JobMatcher.category(it) == selectedField
@@ -53,8 +64,7 @@ fun JobradarApp() {
             .toList()
     }
 
-    val visibleJobs = jobs
-        .filter { it.status == statuses[tab] }
+    val visibleJobs = eligibleInTab
         .filter {
             selectedField == "Alle Fachbereiche" ||
                 JobMatcher.category(it) == selectedField
@@ -96,9 +106,10 @@ fun JobradarApp() {
                     onClick = {
                         scope.launch {
                             searching = true
-                            message = "Mehrquellen-Suche läuft …"
+                            message =
+                                "Mehrquellen-Suche läuft · Radius $selectedRadius km …"
                             try {
-                                val result = repository.refresh()
+                                val result = repository.refresh(selectedRadius)
                                 message =
                                     "${result.accepted} Stellen übernommen · " +
                                     "${result.newCount} neu · ${result.scanned} geprüft\n" +
@@ -132,6 +143,21 @@ fun JobradarApp() {
                 Spacer(Modifier.height(10.dp))
 
                 FilterDropdown(
+                    label = "Suchradius um Magdeburg",
+                    value = "$selectedRadius km",
+                    options = listOf("25 km", "50 km", "75 km", "100 km"),
+                    onSelected = { value ->
+                        val radius = value.substringBefore(" ").toIntOrNull() ?: 50
+                        selectedRadius = radius
+                        SearchPreferences.setRadius(context, radius)
+                        message =
+                            "Suche: Magdeburg + $radius km · Stendal als Ausnahme"
+                    }
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                FilterDropdown(
                     label = "Fachbereich",
                     value = selectedField,
                     options = listOf(
@@ -160,13 +186,18 @@ fun JobradarApp() {
                     "${visibleJobs.size} Stellen in dieser Ansicht",
                     style = MaterialTheme.typography.labelMedium
                 )
+                Text(
+                    "Gehaltsregel: explizit unter 2.600 € netto/Monat wird ausgeschlossen. " +
+                        "Bruttoangaben werden nicht automatisch umgerechnet.",
+                    style = MaterialTheme.typography.labelSmall
+                )
             }
 
             if (visibleJobs.isEmpty()) {
                 item {
                     Card(Modifier.fillMaxWidth()) {
                         Text(
-                            if (jobs.none { it.status == statuses[tab] })
+                            if (eligibleInTab.isEmpty())
                                 "In diesem Bereich sind noch keine Stellen."
                             else
                                 "Für diese Filterkombination gibt es keine Stellen.",
@@ -246,6 +277,7 @@ private fun JobCard(
     onStatus: (String) -> Unit
 ) {
     val field = JobMatcher.category(job) ?: "Sonstiges"
+    val salary = SalaryParser.displayFor(job)
 
     Card(Modifier.fillMaxWidth()) {
         Column(
@@ -255,8 +287,10 @@ private fun JobCard(
             Text(field, style = MaterialTheme.typography.labelLarge)
             Text(job.title, style = MaterialTheme.typography.titleMedium)
             Text("${job.employer} · ${job.city}")
-            job.pay?.let { Text(it) }
+
+            salary?.let { Text("Vergütung: $it") }
             if (job.permanent == true) Text("Unbefristet")
+
             Text("Quelle: ${job.source}", style = MaterialTheme.typography.labelSmall)
 
             Button(

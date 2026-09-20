@@ -18,98 +18,101 @@ class JobRepository(
         val sourceSummary: String
     )
 
-    suspend fun refresh(): SearchSummary = withContext(Dispatchers.IO) {
+    suspend fun refresh(radius: Int = 50): SearchSummary = withContext(Dispatchers.IO) {
+        val effectiveRadius =
+            radius.takeIf { it in listOf(25, 50, 75, 100) } ?: 50
+
         val rawJobs = linkedMapOf<String, Job>()
         val sourceCounts = linkedMapOf<String, Int>()
         val errors = mutableListOf<String>()
-
         val baHits = linkedMapOf<String, JobsucheService.SearchHit>()
 
         suspend fun collectBa(
             what: String? = null,
             where: String = "Magdeburg",
-            radius: Int = 50,
+            searchRadius: Int = effectiveRadius,
             employer: String? = null,
-            size: Int = 50
+            size: Int = 80
         ) {
             try {
                 baService.search(
                     what = what,
                     where = where,
-                    radius = radius,
+                    radius = searchRadius,
                     employer = employer,
                     size = size
                 ).forEach { baHits.putIfAbsent(it.ref, it) }
             } catch (e: Exception) {
                 errors += "BA: ${e.message ?: e.javaClass.simpleName}"
             }
-            delay(300)
+            delay(250)
         }
 
-        // Technik / Projekt / Infrastruktur
-        collectBa(what = "Projekt", where = "Magdeburg", radius = 50, size = 75)
-        collectBa(what = "Ingenieur", where = "Magdeburg", radius = 50, size = 75)
-        collectBa(what = "Infrastruktur", where = "Magdeburg", radius = 50, size = 75)
-        collectBa(what = "Maschinenbau", where = "Magdeburg", radius = 50, size = 75)
+        // Breite Suchprofile statt Prozentbewertung.
+        collectBa(what = "Projekt")
+        collectBa(what = "Ingenieur")
+        collectBa(what = "Energie")
+        collectBa(what = "Energiewende")
+        collectBa(what = "Medien")
+        collectBa(what = "Öffentlichkeitsarbeit")
+        collectBa(what = "Kommunikation")
+        collectBa(what = "Sozialpädagogik")
 
-        // Medien / Kommunikation
-        collectBa(what = "Medien", where = "Magdeburg", radius = 50, size = 75)
-        collectBa(what = "Kommunikation", where = "Magdeburg", radius = 50, size = 75)
-        collectBa(what = "Öffentlichkeitsarbeit", where = "Magdeburg", radius = 50, size = 75)
-        collectBa(what = "Redaktion", where = "Magdeburg", radius = 50, size = 75)
+        // Stendal bleibt unabhängig vom gewählten Radius die Ausnahme.
+        collectBa(where = "Stendal", searchRadius = 15, size = 60)
 
-        // Sozialpädagogik – später hart auf Ministerien begrenzt.
-        collectBa(what = "Sozialpädagogik", where = "Magdeburg", radius = 50, size = 75)
-        collectBa(what = "Soziale Arbeit", where = "Magdeburg", radius = 50, size = 75)
-
-        // Stendal bleibt die vereinbarte Ausnahme.
-        collectBa(where = "Stendal", radius = 15, size = 60)
-
-        val baJobs = baHits.values.take(180).map { hit ->
+        val baJobs = baHits.values.take(160).map { hit ->
             runCatching { baService.details(hit) }
                 .getOrElse { baService.asBasicJob(hit) }
         }
+
         baJobs.forEach { rawJobs.putIfAbsent(it.sourceId, it) }
         sourceCounts["BA"] = baJobs.size
 
-        PortalJobSources.scanAll().forEach { result ->
+        PortalJobSources.scanAll(effectiveRadius).forEach { result ->
             if (result.error != null) {
                 errors += "${result.source}: ${result.error}"
             }
 
             result.jobs.forEach { raw ->
-                val dedupKey = raw.url.lowercase()
-                val already = rawJobs.values.any { it.url.lowercase() == dedupKey }
-                if (!already) rawJobs[raw.sourceId] = raw
+                val sameUrl = rawJobs.values.any {
+                    it.url.equals(raw.url, ignoreCase = true)
+                }
+                if (!sameUrl) rawJobs[raw.sourceId] = raw
             }
 
-            val key = when (result.source) {
+            val shortName = when (result.source) {
                 "Karriereportal Sachsen-Anhalt" -> "Land SA"
                 "SWM Magdeburg" -> "SWM"
                 "MVB Magdeburg" -> "MVB"
                 "Autobahn GmbH" -> "Autobahn"
+                "Hochschule Magdeburg-Stendal" -> "H2"
+                "hierbleiben-jobs" -> "hierbleiben"
+                "Nachwuchsmarkt" -> "Nachwuchsmarkt"
                 else -> result.source
             }
-            sourceCounts[key] = (sourceCounts[key] ?: 0) + result.jobs.size
+            sourceCounts[shortName] =
+                (sourceCounts[shortName] ?: 0) + result.jobs.size
         }
 
         if (rawJobs.isEmpty()) {
-            val details = errors.distinct().take(4).joinToString(" | ")
+            val details = errors.distinct().take(5).joinToString(" | ")
             throw IllegalStateException(
-                if (details.isBlank()) "Keine der Stellenquellen lieferte aktuell Daten."
-                else "Keine Quelle lieferte Daten: $details"
+                if (details.isBlank()) {
+                    "Keine der Stellenquellen lieferte aktuell Daten."
+                } else {
+                    "Keine Quelle lieferte Daten: $details"
+                }
             )
         }
 
-        // Keine Prozentbewertung mehr. Nur noch die vereinbarten harten Ausschlüsse
-        // und die Zuordnung zu Technik / Medien / Sozialpädagogik.
         val acceptedJobs = rawJobs.values
             .filter { JobMatcher.shouldInclude(it) }
             .map { it.copy(score = 0, reasons = "") }
 
         val ids = acceptedJobs.map { it.sourceId }
-        val existing = if (ids.isEmpty()) emptySet()
-        else dao.existingIds(ids).toSet()
+        val existing =
+            if (ids.isEmpty()) emptySet() else dao.existingIds(ids).toSet()
 
         val newCount = ids.count { it !in existing }
         dao.insertAll(acceptedJobs)
@@ -119,7 +122,7 @@ class JobRepository(
             .joinToString(" · ") { "${it.key} ${it.value}" }
             .ifBlank {
                 if (errors.isEmpty()) "keine Quellendetails"
-                else "Teilfehler bei Quellen"
+                else "Teilfehler bei einzelnen Quellen"
             }
 
         SearchSummary(
