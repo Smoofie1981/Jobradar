@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import net.therapietermin.jobradar.data.AppDatabase
 import net.therapietermin.jobradar.data.Job
 import net.therapietermin.jobradar.domain.JobMatcher
+import net.therapietermin.jobradar.domain.RequirementParser
 import net.therapietermin.jobradar.domain.SalaryParser
 import net.therapietermin.jobradar.domain.SearchPreferences
 import net.therapietermin.jobradar.network.JobRepository
@@ -278,6 +279,7 @@ private fun JobCard(
 ) {
     val field = JobMatcher.category(job) ?: "Sonstiges"
     val salary = SalaryParser.displayFor(job)
+    val requirements = RequirementParser.mandatory(job, maxItems = 4)
 
     Card(Modifier.fillMaxWidth()) {
         Column(
@@ -288,10 +290,39 @@ private fun JobCard(
             Text(job.title, style = MaterialTheme.typography.titleMedium)
             Text("${job.employer} · ${job.city}")
 
-            salary?.let { Text("Vergütung: $it") }
-            if (job.permanent == true) Text("Unbefristet")
+            Text(
+                "Vergütung: $salary",
+                style = MaterialTheme.typography.bodyMedium
+            )
 
-            Text("Quelle: ${job.source}", style = MaterialTheme.typography.labelSmall)
+            if (job.permanent == true) {
+                Text("Unbefristet")
+            }
+
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Berufsvoraussetzungen:",
+                style = MaterialTheme.typography.labelLarge
+            )
+
+            if (requirements.isEmpty()) {
+                Text(
+                    "• Keine eindeutigen Muss-Voraussetzungen aus der Anzeige erkannt",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                requirements.forEach { requirement ->
+                    Text(
+                        "• $requirement",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            Text(
+                "Quelle: ${job.source}",
+                style = MaterialTheme.typography.labelSmall
+            )
 
             Button(
                 onClick = onOpen,

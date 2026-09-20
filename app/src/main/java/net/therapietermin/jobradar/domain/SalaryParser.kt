@@ -36,9 +36,48 @@ object SalaryParser {
             .firstOrNull()
     }
 
-    fun displayFor(job: Job): String? =
-        job.pay?.takeIf { it.isNotBlank() }
-            ?: extractDisplay("${job.title} ${job.description}")
+    /**
+     * Liefert für die Kachel IMMER einen Wert.
+     * Priorität:
+     * 1. konkrete Gehaltsangabe,
+     * 2. konkrete Eingruppierung,
+     * 3. erkennbarer Haustarif/Tarifvertrag,
+     * 4. keine Gehaltsangabe.
+     */
+    fun displayFor(job: Job): String {
+        job.pay?.takeIf { it.isNotBlank() }?.let { return it }
+
+        val fullText = "${job.title} ${job.description}"
+        extractDisplay(fullText)?.let { return it }
+
+        val lower = fullText.lowercase(Locale.GERMAN)
+
+        val houseTariffMarkers = listOf(
+            "haustarif",
+            "haus-tarif",
+            "hauseigener tarif",
+            "hauseigenen tarif",
+            "betrieblicher tarif",
+            "betriebliche tarifregelung"
+        )
+        if (houseTariffMarkers.any { it in lower }) {
+            return "Haustarif – keine konkrete Eingruppierung erkannt"
+        }
+
+        val tariffMarkers = listOf(
+            "tarifvertrag",
+            "tarifgebunden",
+            "tarifliche vergütung",
+            "tariflich vergütet",
+            "vergütung nach tarif",
+            "entgelt nach tarif"
+        )
+        if (tariffMarkers.any { it in lower }) {
+            return "Tarifvertrag – keine konkrete Eingruppierung erkannt"
+        }
+
+        return "Keine Gehaltsangabe"
+    }
 
     /**
      * Konservative harte Grenze:
@@ -61,8 +100,9 @@ object SalaryParser {
                 val end = (match.range.last + 35).coerceAtMost(text.lastIndex)
                 val around = text.substring(start, end + 1)
 
-                // Bei einer Gehaltsspanne lieber nicht automatisch aussortieren.
-                if (" bis " in around || Regex("""\d\s*[-–]\s*\d""").containsMatchIn(around)) {
+                if (" bis " in around ||
+                    Regex("""\d\s*[-–]\s*\d""").containsMatchIn(around)
+                ) {
                     continue
                 }
 
